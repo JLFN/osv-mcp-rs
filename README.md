@@ -155,13 +155,19 @@ cargo build --release
 
 The binary is written to `./target/release/osv-mcp`.
 
-### 5.3 Building from Source (alternate method)
+### 5.3 Install from crates.io
+
+```bash
+cargo install osv-mcp
+```
+
+The binary is written to `~/.cargo/bin/osv-mcp`. Add that directory to `PATH` if it is not already present.
+
+### 5.4 Building from Source (alternate method)
 
 ```bash
 cargo build --release --bin osv-mcp
 ```
-
-Note: This package is not published on crates.io. Build from source using one of the methods above.
 
 ---
 
