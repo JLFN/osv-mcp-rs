@@ -23,11 +23,8 @@ Release binary with the standard builder (produces `bin/osv-mcp` and removes
 bash build/linux/build.sh
 ```
 
-or from the shared builder:
-
-```console
-bash /data/build/linux/build.sh -p /data/osv-mcp-rs
-```
+The same builder can be run from the shared location on this machine (see the
+rust-build skill).
 
 ## Installing
 
