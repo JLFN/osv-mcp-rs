@@ -1,400 +1,167 @@
-# OSV MCP Advisory - MCP Server
+# osv-mcp — CVE and security advisory lookup for AI assistants
 
-**Version:** 1.2.0
-**License:** Apache-2.0
-**Language:** Rust (edition 2024)
+[![crates.io](https://img.shields.io/crates/v/osv-mcp.svg?style=for-the-badge&color=fc8d62&logo=rust)](https://crates.io/crates/osv-mcp)
+[![docs.rs](https://img.shields.io/badge/docs.rs-osv_mcp-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs)](https://docs.rs/osv-mcp)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-97ca00?style=for-the-badge)](LICENSE-MIT)
+[![github](https://img.shields.io/badge/github-JLFN_osv_mcp_rs-8da0cb?style=for-the-badge&labelColor=555555&logo=github)](https://github.com/JLFN/osv-mcp-rs)
 
-## 1. Overview
+An MCP server that answers questions about known software vulnerabilities
+from the [OSV.dev](https://osv.dev) vulnerability database — no HTML
+scraping, no API keys, no local database to maintain. It reads one public
+structured API and returns JSON over MCP stdio.
 
-This project implements a Model Context Protocol (MCP) server that provides structured access to security advisory data from the OSV.dev open vulnerability database. It enables AI assistants to query, scan, and assess software vulnerabilities across multiple ecosystems.
+OSV.dev aggregates vulnerability feeds from NVD, the GitHub Advisory
+Database, RustSec, and the advisory databases of PyPI, npm, Go, Maven,
+NuGet, Packagist, and RubyGems. The server turns that into tools an AI
+assistant can drive: search advisories, read full advisory records, scan a
+project's lockfile for vulnerable dependencies, prioritize by practical
+risk, plan remediation, and export compliance evidence.
 
-### 1.1 Purpose
+- **Search** — find advisories (CVE, GHSA, RUSTSEC, OSV) by package,
+  ecosystem, or keyword, with severity and affected-version ranges.
+- **Advisory records** — the full record for one identifier: summary,
+  details, aliases, severity, references, and affected packages.
+- **Lockfile mapping** — scan `Cargo.lock`, `package-lock.json`, or
+  `requirements.txt` against the OSV batch API and report which installed
+  packages have known vulnerabilities.
+- **Risk ranking** — score an advisory 0-10 for your situation (CVSS base,
+  direct vs transitive dependency, internet exposure, known exploit) with a
+  priority label and recommendation.
+- **Patch planning** — the fixed version read from the advisory's affected
+  ranges, plus ordered upgrade steps, rollout order, and regression-test
+  guidance.
+- **Evidence export** — a timestamped, source-attributed JSON evidence pack
+  for audits and compliance reporting.
+- **Caching** — OSV.dev responses are cached in memory for five minutes, so
+  repeated queries within a session do not hit the network again.
 
-- Search for known vulnerabilities (CVE, GHSA, RUSTSEC, OSV) by package, ecosystem, or keyword
-- Retrieve full advisory details including severity, affected versions, and remediation data
-- Scan project lockfiles against the advisory database
-- Score risk using a weighted factor model
-- Generate patch plans and compliance evidence
+## Installation
 
-### 1.2 Data Sources
+Requires a Rust toolchain (rust-version 1.88). No other runtime
+dependencies; the server only needs outbound HTTPS to `api.osv.dev`.
 
-All advisory data is sourced from OSV.dev (Google), which aggregates:
-- National Vulnerability Database (NVD)
-- GitHub Security Advisory Database (GHSA)
-- RustSec Advisory Database (RUSTSEC)
-- PyPI, npm, Go, Maven, NuGet advisory feeds
-
----
-
-## 2. Tools
-
-### 2.1 Tool Inventory
-
-| Tool | Description | Use Case |
-|------|-------------|----------|
-| `search_advisories` | Search advisories by package, ecosystem, or keyword | Identify vulnerabilities in a given package |
-| `get_advisory` | Retrieve full details for a specific advisory ID | Investigate CVE, GHSA, RUSTSEC, or OSV identifiers |
-| `map_vulnerability_to_dependency` | Scan project lockfile against advisory database | Assess whether project dependencies have known vulnerabilities |
-| `rank_security_risk` | Score practical risk using weighted factors | Prioritize remediation efforts |
-| `generate_patch_plan` | Generate remediation steps | Plan upgrade or mitigation strategy |
-| `export_security_evidence` | Export findings as audit evidence | Generate compliance documentation |
-
-### 2.2 Tool Specifications
-
-#### 2.2.1 search_advisories
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `package` | string | false | Package name to search (e.g., "hyper", "serde") |
-| `ecosystem` | string | false | Ecosystem filter: crates.io, npm, PyPI, Go, Maven, NuGet |
-| `query` | string | false | Keyword search; falls back to package name if `package` is unset |
-
-Returns matching advisories with identifiers, summaries, severity levels, and affected version ranges.
-
-#### 2.2.2 get_advisory
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | true | Advisory identifier: CVE-*, GHSA-*, RUSTSEC-*, OSV-* |
-
-Returns full advisory record including summary, details, severity score, aliases, affected packages, version ranges, and references.
-
-#### 2.2.3 map_vulnerability_to_dependency
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `path` | string | true | Absolute path to project directory |
-
-Lockfiles are read in the following order:
-
-| File | Format | Ecosystem |
-|------|--------|-----------|
-| Cargo.lock | TOML (v1, v2, v3) | Rust (crates.io) |
-| package-lock.json | JSON | npm |
-| requirements.txt | name==version lines | Python (PyPI) |
-
-Returns scan results showing each vulnerable package with installed version and associated advisories.
-
-#### 2.2.4 rank_security_risk
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `advisory_id` | string | true | - | Advisory ID to score |
-| `direct_dependency` | bool | false | true | Whether package is a direct dependency |
-| `internet_exposed` | bool | false | false | Whether service is internet-facing |
-| `known_exploit` | bool | false | false | Whether a known exploit exists |
-
-Risk score is computed using the following weighted model:
-
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| CVSS severity | 40% | Base vulnerability severity (0.0 - 10.0) |
-| Direct dependency | +1.5 | Direct dependency versus transitive |
-| Internet exposed | +2.0 | Service faces the public internet |
-| Known exploit | +2.5 | Exploit exists in the wild |
-
-Score thresholds: Critical (>=8.0), High (>=6.0), Medium (>=4.0), Low (<4.0)
-
-#### 2.2.5 generate_patch_plan
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `advisory_id` | string | true | Advisory ID to remediate |
-| `package` | string | false | Package name (auto-detected if omitted) |
-| `current_version` | string | false | Currently installed version |
-
-Returns an ordered remediation plan with upgrade target, test steps, and rollout stages.
-
-#### 2.2.6 export_security_evidence
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `path` | string | true | Path to project directory |
-| `advisory_ids` | array[string] | false | Specific IDs to include (all findings if omitted) |
-
-Returns a structured evidence pack suitable for compliance and audit documentation.
-
----
-
-## 3. Supported Identifiers
-
-| Type | Format | Source |
-|------|--------|--------|
-| CVE | CVE-YYYY-NNNNN | NVD / MITRE |
-| GHSA | GHSA-xxxx-xxxx-xxxx | GitHub Advisory Database |
-| RUSTSEC | RUSTSEC-YYYY-NNNN | RustSec Advisory Database |
-| OSV | OSV-YYYY-NNNN | OSV.dev |
-
-## 4. Supported Ecosystems
-
-- crates.io (Rust)
-- npm (JavaScript / Node.js)
-- PyPI (Python)
-- Go
-- Maven (Java)
-- NuGet (.NET)
-- Packagist (PHP)
-- RubyGems (Ruby)
-
----
-
-## 5. Installation
-
-### 5.1 Prerequisites
-
-- Rust toolchain with edition 2024 support
-- MCP-compatible client (Open Grok, Claude Desktop, Cursor, or similar)
-
-### 5.2 Build from Source
-
-```bash
-git clone https://github.com/JLFN/osv-mcp
-cd osv-mcp
-cargo build --release
-```
-
-The binary is written to `./target/release/osv-mcp`.
-
-### 5.3 Install from crates.io
-
-```bash
+```console
 cargo install osv-mcp
 ```
 
-The binary is written to `~/.cargo/bin/osv-mcp`. Add that directory to `PATH` if it is not already present.
+or install directly from the repository:
 
-### 5.4 Building from Source (alternate method)
-
-```bash
-cargo build --release --bin osv-mcp
+```console
+cargo install --git https://github.com/JLFN/osv-mcp-rs
 ```
 
----
+The binary speaks MCP over stdio; no network listener is opened.
 
-## 6. Integration Guide
+## Configuration
 
-### 6.1 Open Grok Configuration
+### Open Grok
 
-Add the following entry to `~/.opengrok/config.toml`:
+Add the server to `~/.opengrok/config.toml`:
 
 ```toml
 [mcp_servers.osv-mcp]
-command = "/path/to/osv-mcp/target/release/osv-mcp"
+command = "osv-mcp"
 enabled = true
 ```
 
-After saving:
-1. Open Open Grok
-2. Enter `/mcps` to open the MCP servers modal
-3. Press `r` to refresh the server list
-4. Confirm `osv-mcp` appears with 6 tools
+Refresh the MCP list with `/mcps` (press `r`) or restart. The repository
+ships an Open Grok skill at `skills/osv-mcp/SKILL.md` that teaches the agent
+when and how to use each tool; install it with:
 
-No API key is required. OSV.dev is a free, publicly accessible service.
-
-### 6.2 Claude Desktop Configuration
-
-```json
-{
-  "mcpServers": {
-    "osv-mcp": {
-      "command": "/path/to/osv-mcp"
-    }
-  }
-}
+```console
+cp -r skills/osv-mcp ~/.opengrok/skills/osv-mcp
 ```
 
-### 6.3 Cursor Configuration
+### Other MCP clients
 
-```json
-{
-  "mcpServers": {
-    "osv-mcp": {
-      "command": "/path/to/osv-mcp"
-    }
-  }
-}
+Any MCP client that can launch a stdio command works. Point it at the
+`osv-mcp` binary; no environment variables or credentials are needed.
+
+## Architecture
+
+The server is a Rust binary using the `rmcp` MCP toolkit. A single
+`OsvServer` struct holds the tool router and an `OsvClient` (reqwest with an
+in-memory TTL cache). Tools call the OSV.dev REST API (`/v1/query`,
+`/v1/vulns/{id}`, `/v1/querybatch`) and return pretty-printed JSON.
+
+```text
++----------------+   MCP stdio (JSON-RPC)   +------------+   HTTPS   +-------------+
+| MCP client     | <---------------------> | osv-mcp    | --------> | api.osv.dev |
+| (Open Grok,    |                          | (Rust bin) |           |             |
+|  Claude, ...)  |                          |  OsvServer |           |             |
++----------------+                          |  OsvClient |           +-------------+
+                                            |  lockfile  |
+                                            +------------+
 ```
 
----
+All tool operations are read-only: the server makes outbound HTTPS calls to
+`api.osv.dev` only, and lockfile parsing never modifies files. There is no
+telemetry or phone-home behavior.
 
-## 7. Usage Examples
+## Tools
 
-### 7.1 Search Advisories by Package
+| Tool | Answers |
+| --- | --- |
+| `osv_search_advisories` | Are there known vulnerabilities in this package? |
+| `osv_get_advisory` | Show me the full record for this CVE/GHSA/RUSTSEC/OSV id. |
+| `osv_map_dependencies` | Which of my project's dependencies are vulnerable? |
+| `osv_rank_risk` | How risky is this advisory for my situation? |
+| `osv_patch_plan` | How do I fix this advisory? |
+| `osv_export_evidence` | Produce an audit evidence pack for a project. |
 
-Request:
-> "Are there any known vulnerabilities in the hyper crate?"
+## Example
 
-The model invokes `search_advisories` with parameters:
-- package: "hyper"
-- ecosystem: "crates.io"
+Scanning a project and prioritizing the findings:
 
-Response contains advisory count, identifiers, severity levels, and fix versions for each advisory found.
+1. `osv_map_dependencies(path: "/home/user/my-project")` — returns the
+   packages scanned, the vulnerable ones, and their advisory ids.
+2. `osv_get_advisory(id: "RUSTSEC-2021-0079")` — the full record: summary,
+   severity, affected versions, fixed version, references.
+3. `osv_rank_risk(advisory_id: "RUSTSEC-2021-0079", internet_exposed: true,
+   known_exploit: true)` — a 0-10 score with a critical/high/medium/low
+   priority and a recommendation.
+4. `osv_patch_plan(advisory_id: "RUSTSEC-2021-0079", current_version:
+   "0.14.0")` — the fixed version and ordered upgrade steps.
 
-### 7.2 Retrieve Advisory Details
+## Testing
 
-Request:
-> "Tell me about RUSTSEC-2021-0079"
-
-The model invokes `get_advisory` with parameter:
-- id: "RUSTSEC-2021-0079"
-
-Response includes summary, CVSS score, affected versions, fixed version, aliases, and reference URLs.
-
-### 7.3 Scan Project Dependencies
-
-Request:
-> "Scan the project at /home/user/my-project for vulnerabilities"
-
-The model invokes `map_vulnerability_to_dependency` with parameter:
-- path: "/home/user/my-project"
-
-The server reads the project lockfile, queries the OSV.dev batch API, and returns the count of packages scanned, vulnerable packages found, and associated advisories.
-
-### 7.4 Assess Risk Severity
-
-Request:
-> "How risky is RUSTSEC-2021-0079 for our internet-facing service?"
-
-The model invokes `rank_security_risk` with parameters:
-- advisory_id: "RUSTSEC-2021-0079"
-- direct_dependency: true
-- internet_exposed: true
-- known_exploit: true
-
-Response includes a numerical risk score (0-10), priority label, contributing factors, and a remediation recommendation.
-
-### 7.5 Generate Remediation Plan
-
-Request:
-> "How do I fix RUSTSEC-2021-0079? We are on hyper 0.14.0"
-
-The model invokes `generate_patch_plan` with parameters:
-- advisory_id: "RUSTSEC-2021-0079"
-- package: "hyper"
-- current_version: "0.14.0"
-
-Response includes the fixed version, ordered upgrade steps, and rollout sequence.
-
-### 7.6 Export Compliance Evidence
-
-Request:
-> "Generate a security audit report for /home/user/my-project"
-
-The model invokes `export_security_evidence` with parameter:
-- path: "/home/user/my-project"
-
-Response is a structured JSON evidence pack containing all findings with timestamps and source attribution.
-
----
-
-## 8. Architecture
-
-```
-+---------------------+     stdio transport     +---------------------------+
-|                     |    (MCP JSON-RPC)       |                           |
-| Open Grok / Claude  | <---------------------> | osv-mcp                  |
-| / Cursor / other    |                         | (Rust binary)             |
-| MCP client          |                         |                           |
-+---------------------+                         |  +---------------------+  |
-                                                |  | AdvisoryClient      |  |
-                                                |  | (in-memory cache)   |--+--> OSV.dev API (HTTPS)
-                                                |  +---------------------+  |       api.osv.dev
-                                                |  +---------------------+  |
-                                                |  | Lockfile Parser     |  |
-                                                |  | (TOML, JSON, text)  |  |
-                                                |  +---------------------+  |
-                                                +---------------------------+
-```
-
-### 8.1 Communication Protocol
-
-The server communicates exclusively over standard input/output (stdio) using the MCP JSON-RPC protocol. All advisory data is fetched from the OSV.dev REST API.
-
-### 8.2 Caching
-
-Responses from OSV.dev are cached in-memory with a time-to-live (TTL) of 5 minutes. Cache entries are keyed by query parameters to avoid redundant network requests during a session.
-
-### 8.3 Security
-
-- The server makes outbound HTTPS connections to `api.osv.dev` only
-- No telemetry, analytics, or phone-home functionality is present
-- Lockfile parsing is read-only; no files are modified
-- All tool operations are declared as `read_only` in the server manifest
-
----
-
-## 9. Development
-
-### 9.1 Build
-
-```bash
-cargo build --release
-```
-
-### 9.2 Test
-
-```bash
+```console
 cargo test
 ```
 
-The test suite covers the following scenarios:
+The suite covers lockfile parsing (Cargo.lock v1/v2/v3, npm, requirements.txt)
+and the OSV client against an in-process mock HTTP server (search parsing,
+advisory lookup, batch queries, caching, and the 404 error path) — no live
+network calls. See [docs/verification.md](docs/verification.md) for the full
+verification guide.
 
-- Cargo.lock parsing (v1 format with source fields)
-- Cargo.lock v2/v3 format (root packages with source = "null" are skipped)
-- Empty Cargo.lock files (valid TOML with no package entries)
-- npm package-lock.json parsing
-- Python requirements.txt parsing (including comments and empty lines)
-- Non-existent lockfile paths (returns empty result)
-- Error formatting for API failure conditions
+## Project layout
 
-### 9.3 Environment Variables
+- `src/main.rs` — `OsvServer`, the six tools, and the MCP handler.
+- `src/osv.rs` — `OsvClient`: OSV.dev HTTP calls plus the in-memory cache.
+- `src/lockfile.rs` — lockfile parsers (Cargo.lock, npm, requirements.txt).
+- `docs/` — setup and verification guides.
+- `skills/osv-mcp/` — the Open Grok skill for this server.
 
-| Variable | Description |
-|----------|-------------|
-| RUST_LOG | Tracing log level filter (e.g., "debug", "info", "warn") |
+## Documentation
 
-### 9.4 Extending Lockfile Support
+- [docs/setup.md](docs/setup.md) — building, installing, and registering the
+  server with Open Grok.
+- [docs/verification.md](docs/verification.md) — test layers, quality gates,
+  and how to verify a release build.
 
-1. Add a parser function in `src/server.rs` that returns `Vec<LockfileEntry>`
-2. Insert a call to the new parser in `parse_lockfile()` before the fallback return
-3. Add corresponding test cases in the `#[cfg(test)] mod tests` block
+## Known limitations
 
----
+- OSV.dev coverage depends on the upstream feeds: not every ecosystem or
+  every advisory is present, and the NVD feed through OSV can lag NVD
+  itself. The server reports what OSV.dev returns; absence of a result is
+  not proof a package is clean.
+- `requirements.txt` parsing only picks up `name==version` pins; ranges,
+  extras, and editable installs are ignored.
+- The evidence pack documents the state at generation time; re-run it
+  periodically for ongoing compliance.
 
-## 10. Version History
+## License
 
-### 10.1 Version 1.2.0 (Current)
-
-- Proper TOML-based Cargo.lock parsing supporting v1, v2, and v3 formats
-- npm package-lock.json support via JSON parser
-- In-memory response caching with 5-minute TTL
-- Complete removal of `.unwrap()` calls; replaced with proper error propagation
-- 12 unit tests covering lockfile parsing and error paths
-- HTTP client timeout and user-agent configuration
-
-### 10.2 Version 1.1.0
-
-- HealthCheck trait implementation for registry monitoring
-- Structured tracing via tracing-subscriber with environment filter
-- Edition upgrade to Rust 2024
-
-### 10.3 Version 1.0.0
-
-- Initial release with 6 MCP tools
-- OSV.dev API integration
-- Basic lockfile parsing
-- Risk scoring and patch planning
-
----
-
-## 11. License
-
-Licensed under the Apache License, Version 2.0. See the LICENSE file for details.
-
----
-
-## 12. Notes
-
-- No API key is required. OSV.dev is a free, publicly accessible vulnerability database provided by Google.
-- The server initiates HTTPS connections to `api.osv.dev` only. No other network communication occurs.
-- All lockfile parsing operations are read-only. The server does not create, modify, or delete any files on disk.
+Licensed under either of [Apache License, Version
+2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

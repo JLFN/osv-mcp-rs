@@ -1,9 +1,2 @@
-target/
-.DS_Store
-*.swp
-*.swo
-*~
-.vscode/
-.idea/
-*.iml
-*.bak
+/target
+/bin
