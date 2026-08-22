@@ -27,7 +27,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use lockfile::parse_lockfile;
+use lockfile::scan_project;
 use osv::OsvClient;
 
 #[derive(Debug, Clone)]
@@ -70,8 +70,11 @@ struct GetAdvisoryRequest {
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct MapDependenciesRequest {
-    /// Path to the project directory. Reads Cargo.lock, package-lock.json,
-    /// or requirements.txt and checks every package via the OSV batch API.
+    /// Path to the project directory. Discovers and scans every supported
+    /// lockfile: Cargo.lock, package-lock.json, requirements.txt, go.mod,
+    /// pom.xml, packages.config, project.assets.json, Gemfile.lock,
+    /// composer.lock, pubspec.lock, mix.lock, conan.lock, stack.yaml.lock,
+    /// cabal.project.freeze.
     path: String,
 }
 
@@ -168,20 +171,25 @@ impl OsvServer {
         })
     }
 
-    /// Scan a project's lockfile against the OSV batch API.
+    /// Scan a project's lockfiles against the OSV batch API.
     #[tool(
-        description = "Map advisories against the dependencies of a project directory. Reads Cargo.lock (TOML v1/v2/v3), package-lock.json, or requirements.txt, then checks every package and version via the OSV batch API. Returns JSON: packages scanned, vulnerable packages found, and for each one the installed version and up to three advisory ids/summaries."
+        description = "Map advisories against the dependencies of a project directory. Discovers every supported lockfile/manifest present and scans all of them (Rust Cargo.lock, npm package-lock.json, Python requirements.txt, Go go.mod, Maven pom.xml, NuGet packages.config and project.assets.json, Ruby Gemfile.lock, PHP composer.lock, Dart pubspec.lock, Elixir mix.lock, C/C++ conan.lock, Haskell stack.yaml.lock and cabal.project.freeze), then checks every package and version via the OSV batch API. Returns JSON: manifests scanned, packages scanned, vulnerable packages found, and for each one the installed version and up to three advisory ids/summaries."
     )]
     async fn osv_map_dependencies(
         &self,
         Parameters(req): Parameters<MapDependenciesRequest>,
     ) -> String {
-        let packages = parse_lockfile(&req.path).await;
+        let scan = scan_project(&req.path).await;
+        let packages = scan.entries;
 
         if packages.is_empty() {
+            let supported: Vec<&str> = lockfile::SUPPORTED_MANIFESTS
+                .iter()
+                .map(|(file, _)| *file)
+                .collect();
             return json!({
-                "error": "No lockfile found or no packages parsed",
-                "supported": ["Cargo.lock", "package-lock.json", "requirements.txt"],
+                "error": "No supported lockfile found or no packages parsed",
+                "supported": supported,
             })
             .to_string();
         }
@@ -219,6 +227,7 @@ impl OsvServer {
 
         json!({
             "path": req.path,
+            "manifests_scanned": scan.manifests.len(),
             "packages_scanned": packages.len(),
             "vulnerable_packages": findings.len(),
             "findings": findings,
@@ -362,7 +371,8 @@ impl OsvServer {
         &self,
         Parameters(req): Parameters<ExportEvidenceRequest>,
     ) -> String {
-        let packages = parse_lockfile(&req.path).await;
+        let scan = scan_project(&req.path).await;
+        let packages = scan.entries;
         let mut findings = Vec::new();
 
         if let Some(ids) = &req.advisory_ids {

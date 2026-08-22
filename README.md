@@ -21,9 +21,14 @@ risk, plan remediation, and export compliance evidence.
   ecosystem, or keyword, with severity and affected-version ranges.
 - **Advisory records** — the full record for one identifier: summary,
   details, aliases, severity, references, and affected packages.
-- **Lockfile mapping** — scan `Cargo.lock`, `package-lock.json`, or
-  `requirements.txt` against the OSV batch API and report which installed
-  packages have known vulnerabilities.
+- **Lockfile mapping** — scan every supported lockfile present in a
+  directory against the OSV batch API and report which installed packages
+  have known vulnerabilities. Languages covered: Rust (Cargo.lock),
+  JavaScript / TypeScript (package-lock.json), Python (requirements.txt),
+  Go (go.mod), Java (pom.xml), .NET (packages.config, project.assets.json),
+  Ruby (Gemfile.lock), PHP (composer.lock), Dart (pubspec.lock), Elixir
+  (mix.lock), C/C++ (conan.lock), and Haskell (stack.yaml.lock,
+  cabal.project.freeze).
 - **Risk ranking** — score an advisory 0-10 for your situation (CVSS base,
   direct vs transitive dependency, internet exposure, known exploit) with a
   priority label and recommendation.
@@ -129,7 +134,10 @@ Scanning a project and prioritizing the findings:
 cargo test
 ```
 
-The suite covers lockfile parsing (Cargo.lock v1/v2/v3, npm, requirements.txt)
+The suite covers lockfile parsing for all twelve supported ecosystems
+(Cargo.lock v1/v2/v3, package-lock.json, requirements.txt, go.mod, pom.xml,
+packages.config, project.assets.json, Gemfile.lock, composer.lock,
+pubspec.lock, mix.lock, conan.lock, stack.yaml.lock, cabal.project.freeze)
 and the OSV client against an in-process mock HTTP server (search parsing,
 advisory lookup, batch queries, caching, and the 404 error path) — no live
 network calls. See [docs/verification.md](docs/verification.md) for the full
@@ -139,7 +147,8 @@ verification guide.
 
 - `src/main.rs` — `OsvServer`, the six tools, and the MCP handler.
 - `src/osv.rs` — `OsvClient`: OSV.dev HTTP calls plus the in-memory cache.
-- `src/lockfile.rs` — lockfile parsers (Cargo.lock, npm, requirements.txt).
+- `src/lockfile.rs` — lockfile parsers for all twelve ecosystems and the
+  multi-manifest directory scanner.
 - `docs/` — setup and verification guides.
 - `skills/osv-mcp/` — the Open Grok skill for this server.
 
@@ -158,6 +167,14 @@ verification guide.
   not proof a package is clean.
 - `requirements.txt` parsing only picks up `name==version` pins; ranges,
   extras, and editable installs are ignored.
+- Parsers are best-effort: Maven dependencies without an explicit version
+  are skipped, ranged `Gemfile.lock` constraints are not resolved, and
+  `cabal.project.freeze` / `stack.yaml.lock` read concrete pinned versions
+  only. Manifest discovery is top-level only; lockfiles in subdirectories
+  (for example a nested `frontend/package-lock.json`) are not recursed
+  into.
+- For Maven, the package name sent to OSV is `groupId:artifactId`, matching
+  the identifier the OSV Maven feed uses.
 - The evidence pack documents the state at generation time; re-run it
   periodically for ongoing compliance.
 

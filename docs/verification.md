@@ -4,10 +4,14 @@ How the test suites work, and how to verify a release build before shipping.
 
 ## Test layers
 
-1. Unit tests for lockfile parsing (`src/lockfile.rs`) — Cargo.lock v1/v2/v3
-   (including skipping the root package), npm `package-lock.json`,
-   requirements.txt with comments and blank lines, unknown paths, and the
-   project's own Cargo.lock. Pure parsers, no network.
+1. Unit tests for lockfile parsing (`src/lockfile.rs`) — one parser per
+   supported ecosystem: Cargo.lock v1/v2/v3 (including skipping the root
+   package), npm `package-lock.json`, `requirements.txt` with comments and
+   blank lines, `go.mod`, `pom.xml`, `packages.config` and
+   `project.assets.json`, `Gemfile.lock`, `composer.lock`, `pubspec.lock`,
+   `mix.lock`, `conan.lock`, `stack.yaml.lock`, and `cabal.project.freeze`,
+   plus directory scans that merge multiple manifests and deduplicate.
+   Pure parsers, no network.
 
 2. Client tests (`src/osv.rs`) — the `OsvClient` is exercised against an
    in-process mock HTTP server (a `tokio` TCP listener answering with canned

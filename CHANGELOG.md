@@ -1,5 +1,46 @@
 # Changelog - osv-mcp
 
+## [1.4.0] - 2026-08-22
+
+### Added
+- Multi-language lockfile scanning. `osv_map_dependencies` (and
+  `osv_export_evidence`) now discover and parse every supported manifest
+  present in a project directory, not just the first one found, so a
+  project with several lockfiles is scanned across all of its languages.
+- Lockfile parsers for nine new ecosystems, in addition to the existing
+  crates.io / npm / PyPI support:
+  - Go (`go.mod`)
+  - Maven / Java (`pom.xml`, package name `groupId:artifactId`)
+  - NuGet / .NET (`packages.config`, `project.assets.json`)
+  - RubyGems / Ruby (`Gemfile.lock`)
+  - Packagist / PHP (`composer.lock`)
+  - Pub / Dart (`pubspec.lock`)
+  - Hex / Elixir (`mix.lock`)
+  - ConanCenter / C/C++ (`conan.lock`)
+  - Hackage / Haskell (`stack.yaml.lock`, `cabal.project.freeze`)
+- Ecosystem identifiers match the strings accepted by the OSV.dev batch
+  endpoint (verified live), including the non-obvious `Pub` for Dart and
+  `ConanCenter` for C/C++.
+- `osv_map_dependencies` response now reports `manifests_scanned` alongside
+  the packages-scanned count.
+- `quick-xml` dependency for XML manifest parsing (`pom.xml`,
+  `packages.config`).
+
+### Changed
+- Lockfile parsing is deduplicated by (name, ecosystem, version) so the
+  same package listed in multiple manifests (for example both NuGet forms)
+  is queried once.
+- HTTP client user-agent version is now derived from the crate version
+  instead of a hard-coded string.
+
+### Notes
+- Parsers are read-only and best-effort. Maven dependencies without an
+  explicit version are skipped; `requirements.txt` only reads
+  `name==version` pins; `Gemfile.lock` reads the resolved version of each
+  spec; `cabal.project.freeze` and `stack.yaml.lock` read concrete pinned
+  versions. Manifest discovery is top-level only (nested lockfiles are not
+  recursed into).
+
 ## [1.3.0] - 2026-08-08
 
 ### Changed

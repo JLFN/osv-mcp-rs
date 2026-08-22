@@ -42,7 +42,7 @@ impl OsvClient {
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(15))
-                .user_agent("osv-mcp/1.3.0")
+                .user_agent(format!("osv-mcp/{}", env!("CARGO_PKG_VERSION")))
                 .build()
                 .expect("reqwest Client::builder() should never fail with these options"),
             base_url,
