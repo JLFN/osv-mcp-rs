@@ -1,7 +1,7 @@
 ---
 project: osv-mcp-rs
 plan_start_commit: e41a10a
-last_updated_commit: e41a10a
+last_updated_commit: c8377db
 branch: main
 remote: https://github.com/JLFN/osv-mcp-rs.git
 handoff_written_at_context_usage: ~5% (fresh session; signals.json not reliably written)
@@ -33,33 +33,33 @@ Standing rules currently in effect:
 - Graphify rebuild (rule 12): at commit time.
 - repo-rag reindex (rule 11, 2026-08-11): on demand only — no commit-time step; rebuild only when search must reflect new code.
 
-## 2. Current state (2026-08-11 — v1.3.0 COMPLETE, verified)
+## 2. Current state (2026-08-22 — v1.4.0 COMPLETE, verified)
 
-- What the repo is: osv-mcp v1.3.0 (Cargo.toml, rust-version 1.88) — MCP server for CVE and security advisory lookup via OSV.dev: search advisories, full advisory records, lockfile mapping (Cargo.lock v1/v2/v3, package-lock.json, requirements.txt), risk ranking, patch planning, evidence export. Six tools with the osv_ prefix on the rmcp 3.1 factory template (OsvServer + ToolRouter).
-- Newest unit outcome: v1.3.0 (2026-08-08) refactored the server onto the standard MCP factory template (dropped adk-mcp-sdk), renamed tools to the osv_ prefix, added in-process mock-HTTP client tests, prepared for crates.io (dual MIT OR Apache-2.0, README badge row, embedded build/ builder, docs/setup.md + docs/verification.md).
-- Git facts (re-verified this session): branch main; remote origin https://github.com/JLFN/osv-mcp-rs.git; HEAD e41a10a "docs(setup): drop machine-specific build paths before publish" (2026-08-08); working tree clean.
-- Operational protocol: no special protocol — the suite is cargo test --all-targets (lockfile parser unit tests + mock-HTTP client tests; no live network). Deliverable built with the canonical builder.
+- What the repo is: osv-mcp v1.4.0 (Cargo.toml, rust-version 1.88) — MCP server for CVE and security advisory lookup via OSV.dev: search advisories, full advisory records, multi-language lockfile mapping, risk ranking, patch planning, evidence export. Six tools with the osv_ prefix on the rmcp 3.1 factory template (OsvServer + ToolRouter).
+- Newest unit outcome: v1.4.0 (2026-08-22) made lockfile scanning multi-language. osv-map-dependencies now discovers and parses every supported manifest in a directory (twelve ecosystems: crates.io, npm, PyPI, Go, Maven, NuGet, RubyGems, Packagist, Pub, Hex, ConanCenter, Hackage) and queries OSV.dev for all of them, deduplicated by (name, ecosystem, version). Added quick-xml for XML manifests.
+- Git facts (re-verified this session): branch main; remote origin https://github.com/JLFN/osv-mcp-rs.git; feature commit c8377db "feat(lockfile): scan all languages via multi-ecosystem lockfile parsing" (trailer "Unit: 3 complete"); repo visibility PUBLIC (gh repo view verified).
+- Operational protocol: no special protocol — the suite is cargo test --all-targets (28 lockfile-parser + client unit tests, no live network); fmt and clippy (-D warnings) must be clean.
 - Installed/registered state: see section 4.
 
 ## 3. Next unit plan — none documented
 
 Status: not started.
 
-- No active plan is documented. The repo's docs (docs/setup.md, docs/verification.md) are build/test guides, not a roadmap. Derive the next unit from git log and the open issues on github.com/JLFN/osv-mcp-rs; do not invent work.
-- Trailer convention: the final commit of each unit carries the trailer "Unit: N complete" as its last body line, so a fresh session can reconstruct unit boundaries with git log --grep "Unit: .* complete" instead of reading diffs (per the template).
+- No active plan is documented. Derive the next unit from git log and the open issues on github.com/JLFN/osv-mcp-rs; do not invent work.
+- Trailer convention: the final commit of each unit carries the trailer "Unit: N complete" as its last body line, so a fresh session can reconstruct unit boundaries with git log --grep "Unit: .* complete" instead of reading diffs (per the template). As of c8377db only that commit carries a trailer; earlier units (v1.2.0, v1.3.0) were not tagged.
 - When a unit completes: replace this entire section with the next unit's plan, fold this unit's outcome into section 2, and advance last_updated_commit in the frontmatter in the SAME commit.
 
 ## 4. Project facts a fresh session cannot re-derive
 
-- What exists: osv-mcp v1.3.0 crate (src/main.rs, src/lockfile.rs, src/osv.rs). The deliverable binary lives at bin/osv-mcp — /bin is gitignored, so a fresh clone cannot see it; reproduce it with the canonical builder: bash /data/build/linux/build.sh -p /data/osv-mcp-rs (produces bin/osv-mcp, removes target/). The embedded build/ builder is tracked in the repo.
-- Installed / registered: ~/.local/bin/osv-mcp = the v1.3.0 release binary (built 2026-08-08, 5359560 bytes, identical to bin/osv-mcp); registered as the [mcp_servers.osv-mcp] entry in ~/.opengrok/config.toml (command "osv-mcp"; 6 tools live in this session). Skill skills/osv-mcp/SKILL.md is tracked in the repo and synced to ~/.opengrok/skills/osv-mcp/.
-- Environment facts: outbound HTTPS to api.osv.dev required; no API key, no local database.
-- Verification: no counts recorded here. Run the project suite; the expected numbers are in the next unit's verify phase (section 3).
+- What exists: osv-mcp v1.4.0 crate (src/main.rs, src/lockfile.rs, src/osv.rs). The deliverable binary lives at bin/osv-mcp — /bin is gitignored, so a fresh clone cannot see it; reproduce it with the canonical builder: bash /data/build/linux/build.sh -p /data/osv-mcp-rs (produces bin/osv-mcp, removes target/). The embedded build/ builder is tracked in the repo.
+- Installed / registered: ~/.local/bin/osv-mcp = the v1.4.0 release binary (built 2026-08-22, 5357704 bytes, identical to bin/osv-mcp; installed via atomic mv over the running v1.3.0); registered as the [mcp_servers.osv-mcp] entry in ~/.opengrok/config.toml (command "osv-mcp"). The session's connected server process is still the old v1.3.0 inode until restarted; restart to serve the new multi-language tools in-session. Skill skills/osv-mcp/SKILL.md is tracked in the repo and synced to ~/.opengrok/skills/osv-mcp/.
+- Environment facts: outbound HTTPS to api.osv.dev required; no API key, no local database. OSV batch ecosystem identifiers verified live: Pub (Dart), ConanCenter (C/C++), Hackage all accepted; Swift/swiftpm rejected by OSV.dev (not supported).
+- Verification: 28 tests pass; fmt + clippy clean; OSV scan of the project dirty then clean (two advisories fixed by dependency bumps, see c8377db).
 
 ## 5. Guardrails and open items
 
 - Global rules in effect (from ~/.opengrok/AGENTS.md): yolo mode, no pause-and-ask (rules 6/7/8/9/10); canonical builder for deliverables (5); OSV scan before push (10); graphify rebuild at commit time (12); repo-rag on demand (11); never publish private repos, visibility check (gh repo view) before any remote action (6); no emojis / plain text / conventional commits with QA bodies (1-3).
-- Project-specific guardrails: none — the repo has no AGENTS.md. Keep the osv_ tool-name prefix (v1.3.0 renamed the tools; prompts referencing the old names must be updated). The crates.io release is prepared in the README, but repo visibility was NOT verified this session (no remote commands run) — check gh repo view JLFN/osv-mcp-rs before any publish or push.
+- Project-specific guardrails: none — the repo has no AGENTS.md. Keep the osv_ tool-name prefix (v1.3.0 renamed the tools; prompts referencing the old names must be updated). Repo visibility verified this session via gh repo view JLFN/osv-mcp-rs: PUBLIC (safe to push). The crates.io release is prepared in the README; before publishing, re-run the visibility check.
 - OPEN items: none known. The next unit is to be derived from git log and open issues (section 3).
 
 ## 6. Progress and staleness check (run this first, every session)
