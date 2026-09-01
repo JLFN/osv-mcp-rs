@@ -1,0 +1,9 @@
+{
+  "name": "pruned",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "pruned", "version": "1.0.0" },
+    "node_modules/prunedpkg": { "version": "1.0.0" }
+  }
+}

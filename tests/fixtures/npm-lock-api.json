@@ -1,0 +1,9 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "api", "version": "1.0.0" },
+    "node_modules/apipkg": { "version": "1.0.0" }
+  }
+}

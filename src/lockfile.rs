@@ -48,34 +48,35 @@ pub struct LockfileScan {
     pub manifests: Vec<String>,
 }
 
-/// Scan a project directory for every supported manifest file present, parse
-/// all of them, and return every package entry deduplicated by
+/// Directories that must never be descended into when walking a project tree
+/// for manifests. Scanning `node_modules` would explode the walk, and `.git`
+/// and `target` hold SCM/build internals, not project dependencies.
+const SKIP_DIRS: &[&str] = &["node_modules", ".git", "target"];
+
+/// Scan a project tree for every supported manifest file present (recursing
+/// into subdirectories but never into `node_modules`, `.git`, or `target`),
+/// parse them all, and return every package entry deduplicated by
 /// (name, ecosystem, version). Returns an empty scan when the directory is
 /// missing or unreadable.
 pub async fn scan_project(path: &str) -> LockfileScan {
     let mut scan = LockfileScan::default();
+    let root = std::path::Path::new(path);
 
-    let mut entries = match fs::read_dir(path).await {
-        Ok(d) => d,
-        Err(_) => return scan,
-    };
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    collect_manifests(root, root, &mut found).await;
 
-    let mut found: Vec<String> = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let file = entry.file_name().to_string_lossy().into_owned();
-        if SUPPORTED_MANIFESTS.iter().any(|(f, _)| *f == file.as_str()) {
-            found.push(file);
-        }
-    }
-
-    for file in found {
-        let full = format!("{}/{}", path, file);
+    for rel in found {
+        let full = root.join(&rel);
         let Ok(content) = fs::read_to_string(&full).await else {
             continue;
         };
-        let parsed = parse_manifest(&file, &content);
+        let filename = rel
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let parsed = parse_manifest(&filename, &content);
         scan.entries.extend(parsed);
-        scan.manifests.push(file);
+        scan.manifests.push(rel.to_string_lossy().into_owned());
     }
 
     // Deduplicate across manifests that may list the same package (e.g. a
@@ -87,6 +88,41 @@ pub async fn scan_project(path: &str) -> LockfileScan {
     });
 
     scan
+}
+
+/// Recursively collect the relative paths of every supported manifest file
+/// under `dir`. `root` anchors relative-path computation; `out` receives the
+/// paths. Subdirectories named in [`SKIP_DIRS`] are pruned without descending.
+async fn collect_manifests(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+) {
+    let mut entries = match fs::read_dir(dir).await {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+
+        if let Ok(file_type) = entry.file_type().await {
+            if file_type.is_dir() {
+                if SKIP_DIRS.contains(&name.as_ref()) {
+                    continue;
+                }
+                Box::pin(collect_manifests(&path, root, out)).await;
+                continue;
+            }
+        }
+
+        if SUPPORTED_MANIFESTS.iter().any(|(f, _)| *f == name.as_ref()) {
+            if let Ok(rel) = path.strip_prefix(root) {
+                out.push(rel.to_path_buf());
+            }
+        }
+    }
 }
 
 /// Route a manifest filename to its parser.
@@ -808,6 +844,63 @@ source = "null"
             .iter()
             .any(|e| e.name == "axios" && e.version == "1.7.0"));
         assert!(entries.iter().all(|e| e.ecosystem == "npm"));
+    }
+
+    // --- scan_project recursive tree walk ---
+
+    /// Copy a committed JSON fixture file from `tests/fixtures` into the temp
+    /// scan tree at the given relative path (creating parent dirs).
+    fn copy_fixture(base: &std::path::Path, rel: &str, fixture: &str) {
+        let p = base.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture);
+        std::fs::copy(&src, &p).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_scan_project_recursive_coverage() {
+        let base = std::env::temp_dir().join(format!("osv_scan_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+
+        // Real manifests at the root and in nested apps/ subdirectories.
+        copy_fixture(&base, "package-lock.json", "npm-lock-root.json");
+        copy_fixture(&base, "apps/web/package-lock.json", "npm-lock-web.json");
+        copy_fixture(&base, "apps/api/package-lock.json", "npm-lock-api.json");
+        // Manifests that must be pruned by the walker.
+        copy_fixture(
+            &base,
+            "node_modules/skip-me/package-lock.json",
+            "npm-lock-pruned.json",
+        );
+        copy_fixture(&base, ".git/package-lock.json", "npm-lock-pruned.json");
+        copy_fixture(
+            &base,
+            "apps/web/node_modules/nested-mod/package-lock.json",
+            "npm-lock-pruned.json",
+        );
+
+        let scan = scan_project(base.to_str().unwrap()).await;
+        let names: Vec<&str> = scan.entries.iter().map(|e| e.name.as_str()).collect();
+
+        // Root + nested manifests are discovered and parsed.
+        assert!(names.contains(&"rootpkg"));
+        assert!(names.contains(&"webpkg"));
+        assert!(names.contains(&"apipkg"));
+        assert!(scan.manifests.contains(&"package-lock.json".to_string()));
+        assert!(scan
+            .manifests
+            .contains(&"apps/web/package-lock.json".to_string()));
+        assert!(scan
+            .manifests
+            .contains(&"apps/api/package-lock.json".to_string()));
+        assert_eq!(scan.manifests.len(), 3);
+
+        // node_modules, .git, and any manifest under node_modules are pruned.
+        assert!(!names.contains(&"prunedpkg"));
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     // --- Python / requirements.txt ---
