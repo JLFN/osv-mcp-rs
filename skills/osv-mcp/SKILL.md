@@ -56,12 +56,15 @@ Answer questions about known software vulnerabilities with the osv-mcp MCP serve
 ## Rules
 
 - Report what OSV.dev returns. Absence of a result is not proof a package is clean; say so when the user needs certainty.
-- Lockfile parsing is read-only and best-effort. All twelve ecosystems are
-  detected and parsed from the project's top-level directory; only concrete
-  installed versions are queried (pinned requirements.txt `name==version`
-  lines, Maven dependencies with an explicit version, resolved Gemfile.lock
-  specs, frozen Haskell pins). Unpinned, ranged, or versionless entries are
-  ignored, and nested lockfiles in subdirectories are not recursed into.
+- Lockfile parsing is read-only and best-effort. The scan walks the project
+  tree recursively — including monorepo subdirectories — while pruning
+  node_modules, .git, and target, and parses every supported manifest it
+  finds (all twelve ecosystems); only concrete installed versions are queried
+  (pinned requirements.txt `name==version` lines, Maven dependencies with an
+  explicit version, resolved Gemfile.lock specs, frozen Haskell pins).
+  Unpinned, ranged, or versionless entries are ignored. Large dependency sets
+  are queried in chunked sub-batches so the scan stays within OSV.dev's
+  per-request query cap.
 - No API key is needed; the server only talks to api.osv.dev over HTTPS.
 - If the server is not listed, check it with: open-grok mcp doctor osv-mcp.
 
