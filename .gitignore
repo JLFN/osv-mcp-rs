@@ -2,3 +2,6 @@
 /bin
 /graphify-out
 /graphify-rs-out
+# Local-only handoff files: never tracked, never packaged, never on a branch.
+/osv-mcp-rs-handoff.md
+/docs/handoff.md
