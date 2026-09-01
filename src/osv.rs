@@ -263,6 +263,58 @@ impl OsvClient {
         self.cache_set(cache_key, data.clone());
         Ok(data)
     }
+
+    /// Query OSV's batch endpoint for more packages than fit in one request.
+    ///
+    /// Splits `packages` into sub-batches of at most `chunk_size` and merges
+    /// the results positionally, so the returned `results` array keeps one
+    /// entry per input package in the original order. OSV.dev caps a single
+    /// `/v1/querybatch` request well below the size of a large monorepo's
+    /// dependency set (it returns HTTP 400 beyond ~1000 queries), so chunking
+    /// is required for correctness, not just convenience. A failed sub-batch
+    /// does not drop the others: its slots come back as `null` and a
+    /// `warnings` note is attached when any chunk errored.
+    pub async fn query_batch_chunked(
+        &self,
+        packages: Vec<(&str, &str, &str)>,
+        chunk_size: usize,
+    ) -> Result<Value, String> {
+        let chunk_size = chunk_size.max(1);
+        let chunk_count = packages.len().div_ceil(chunk_size);
+        let mut merged: Vec<Value> = Vec::with_capacity(packages.len());
+        let mut chunk_errors: Vec<String> = Vec::new();
+
+        for chunk in packages.chunks(chunk_size) {
+            match self.query_batch(chunk.to_vec()).await {
+                Ok(resp) => {
+                    let mut results: Vec<Value> =
+                        resp["results"].as_array().cloned().unwrap_or_default();
+                    // Pad a short or empty response so the slot count matches.
+                    while results.len() < chunk.len() {
+                        results.push(Value::Null);
+                    }
+                    merged.extend(results.into_iter().take(chunk.len()));
+                }
+                Err(e) => {
+                    chunk_errors.push(e);
+                    for _ in chunk {
+                        merged.push(Value::Null);
+                    }
+                }
+            }
+        }
+
+        let mut out = json!({"results": merged});
+        if !chunk_errors.is_empty() {
+            out["warnings"] = json!({
+                "message": "one or more query batches failed; their slots are null",
+                "failed_chunks": chunk_errors.len(),
+                "total_chunks": chunk_count,
+                "errors": chunk_errors,
+            });
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -301,6 +353,50 @@ mod tests {
             );
             let _ = socket.write_all(resp.as_bytes()).await;
             let _ = socket.shutdown().await;
+        });
+        format!("http://{}", addr)
+    }
+
+    /// Read the request head (up to and including the blank line after
+    /// headers) so a mock-server connection is consumed and ready to respond.
+    async fn read_request_head(socket: &mut tokio::net::TcpStream) {
+        let mut buf = [0u8; 4096];
+        let mut read = 0usize;
+        while read < buf.len() {
+            let n = socket.read(&mut buf[read..]).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            read += n;
+            if buf[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+    }
+
+    /// Spawn an in-process HTTP server that accepts exactly `bodies.len()`
+    /// connections, answering the i-th with `bodies[i]` verbatim. Lets tests
+    /// prove cross-request positional merging for chunked queries.
+    async fn spawn_mock_server_seq(bodies: Vec<&'static str>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock seq");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            for body in bodies {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(x) => x,
+                    Err(_) => break,
+                };
+                read_request_head(&mut socket).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
         });
         format!("http://{}", addr)
     }
@@ -381,6 +477,93 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["vulns"][0]["id"], "CVE-2024-0001");
         assert!(results[1]["vulns"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_chunked_merges_positionally() {
+        // 4 packages with chunk_size=2 -> 2 requests. Distinct canned bodies
+        // prove the second chunk's results land after the first, losslessly.
+        let base = spawn_mock_server_seq(vec![
+            r#"{"results":[{"vulns":[{"id":"CVE-1"}]},{"vulns":[]}]}"#,
+            r#"{"results":[{"vulns":[]},{"vulns":[{"id":"CVE-2"}]}]}"#,
+        ])
+        .await;
+        let client = OsvClient::with_base_url(base);
+
+        let result = client
+            .query_batch_chunked(
+                vec![
+                    ("a", "npm", "1.0.0"),
+                    ("b", "npm", "1.0.1"),
+                    ("c", "npm", "1.0.2"),
+                    ("d", "npm", "1.0.3"),
+                ],
+                2,
+            )
+            .await
+            .expect("chunked batch should succeed");
+
+        let results = result["results"].as_array().expect("results array");
+        assert_eq!(results.len(), 4, "one slot per package across chunks");
+        assert_eq!(results[0]["vulns"][0]["id"], "CVE-1");
+        assert!(results[1]["vulns"].as_array().unwrap().is_empty());
+        assert!(results[2]["vulns"].as_array().unwrap().is_empty());
+        assert_eq!(results[3]["vulns"][0]["id"], "CVE-2");
+        assert!(result["warnings"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_chunked_partial_failure_keeps_others() {
+        // 4 packages, chunk_size=2. The first chunk's request returns 500
+        // (query_batch yields Err), the second returns 200 with one vuln.
+        // The failed chunk must not drop the successful one.
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                read_request_head(&mut socket).await;
+                let body = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = socket.write_all(body.as_bytes()).await;
+            }
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                read_request_head(&mut socket).await;
+                let payload = r#"{"results":[{"vulns":[{"id":"CVE-2"}]},{"vulns":[]}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            }
+        });
+        let client = OsvClient::with_base_url(format!("http://{}", addr));
+
+        let result = client
+            .query_batch_chunked(
+                vec![
+                    ("a", "npm", "1.0.0"),
+                    ("b", "npm", "1.0.1"),
+                    ("c", "npm", "1.0.2"),
+                    ("d", "npm", "1.0.3"),
+                ],
+                2,
+            )
+            .await
+            .expect("partial chunked batch should still succeed");
+
+        let results = result["results"].as_array().expect("results array");
+        assert_eq!(results.len(), 4);
+        // First chunk errored -> null slots, no vulns.
+        assert!(results[0]["vulns"].as_array().is_none());
+        assert!(results[1]["vulns"].as_array().is_none());
+        // Second chunk survived and is positioned correctly.
+        assert_eq!(results[2]["vulns"][0]["id"], "CVE-2");
+        assert!(results[3]["vulns"].as_array().unwrap().is_empty());
+        let warnings = result["warnings"].as_object().expect("warnings present");
+        assert_eq!(warnings["failed_chunks"], 1);
+        assert_eq!(warnings["total_chunks"], 2);
     }
 
     #[tokio::test]

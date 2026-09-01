@@ -199,8 +199,18 @@ impl OsvServer {
             .map(|e| (e.name.as_str(), e.ecosystem.as_str(), e.version.as_str()))
             .collect();
 
+        // OSV.dev caps a single /v1/querybatch request at ~1000 queries
+        // (it returns HTTP 400 beyond that), so a large monorepo must be
+        // split into sub-batches. query_batch_chunked merges them positionally
+        // so every scanned package keeps a slot.
+        const QUERY_BATCH_CHUNK: usize = 256;
+
         let mut findings = Vec::new();
-        match self.client.query_batch(batch).await {
+        match self
+            .client
+            .query_batch_chunked(batch, QUERY_BATCH_CHUNK)
+            .await
+        {
             Ok(resp) => {
                 if let Some(results) = resp["results"].as_array() {
                     for (idx, result) in results.iter().enumerate() {
