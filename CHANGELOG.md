@@ -38,8 +38,21 @@
   explicit version are skipped; `requirements.txt` only reads
   `name==version` pins; `Gemfile.lock` reads the resolved version of each
   spec; `cabal.project.freeze` and `stack.yaml.lock` read concrete pinned
-  versions. Manifest discovery is top-level only (nested lockfiles are not
-  recursed into).
+  versions. The scan now walks the project tree recursively (pruning
+  `node_modules`, `.git`, and `target`), so nested and monorepo lockfiles are
+  covered rather than only the top-level directory.
+
+### Fixed
+- Monorepo false negatives. `osv_map_dependencies` now recurses into
+  subdirectories, so nested application lockfiles (for example
+  `apps/web/package-lock.json`) are scanned instead of only the top-level
+  directory; vulnerable packages that appear only in nested lockfiles were
+  previously missed.
+- Large-batch reliability. Large dependency sets are now split into chunked
+  `/v1/querybatch` sub-batches and merged positionally, because OSV.dev
+  returns HTTP 400 for a single batch beyond ~1000 queries. A failed chunk
+  does not drop the others (its slots come back null and a warning is
+  attached).
 
 ## [1.3.0] - 2026-08-08
 
