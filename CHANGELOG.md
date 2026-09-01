@@ -1,5 +1,16 @@
 # Changelog - osv-mcp
 
+## [1.4.1] - 2026-09-01
+
+### Docs
+- Corrected the README "Known limitations" wording that claimed manifest
+  discovery is top-level only and that nested lockfiles are not recursed
+  into. The published documentation now matches the 1.4.0 behavior: the scan
+  walks the project tree recursively (pruning `node_modules`, `.git`,
+  `target`) and queries large dependency sets in chunked `/v1/querybatch`
+  sub-batches. No code changed in this patch; it exists to refresh the
+  README frozen into the published crate.
+
 ## [1.4.0] - 2026-08-22
 
 ### Added
