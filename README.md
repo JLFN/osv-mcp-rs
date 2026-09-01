@@ -170,9 +170,11 @@ verification guide.
 - Parsers are best-effort: Maven dependencies without an explicit version
   are skipped, ranged `Gemfile.lock` constraints are not resolved, and
   `cabal.project.freeze` / `stack.yaml.lock` read concrete pinned versions
-  only. Manifest discovery is top-level only; lockfiles in subdirectories
-  (for example a nested `frontend/package-lock.json`) are not recursed
-  into.
+  only. The scan walks the project tree recursively (pruning `node_modules`,
+  `.git`, and `target`), so nested and monorepo lockfiles are covered, not
+  just the top-level directory. Large dependency sets are queried in chunked
+  `/v1/querybatch` sub-batches and merged positionally, because OSV.dev
+  returns HTTP 400 for a single batch beyond ~1000 queries.
 - For Maven, the package name sent to OSV is `groupId:artifactId`, matching
   the identifier the OSV Maven feed uses.
 - The evidence pack documents the state at generation time; re-run it
