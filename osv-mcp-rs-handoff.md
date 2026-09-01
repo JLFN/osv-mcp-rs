@@ -8,6 +8,19 @@ handoff_written_at_context_usage: 19%
 handoff_written_at: 2026-09-01T05:13:38+02:00
 session_id: 01a05ab9-ea9f-76a3-9e75-b36c1bcd9c69
 ---
+--- handoff probe (auto) ---
+=== handoff probe (osv-mcp-rs) ===
+--- units completed since plan start (b0e6637):
+  (none)
+--- progress diff stat:
+AGENTS.md             |  17 +++++
+ docs/handoff.md       |  83 ++----------------------
+ osv-mcp-rs-handoff.md | 176 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 197 insertions(+), 79 deletions(-)
+--- staleness (last_updated_commit b0e6637 .. HEAD):
+312e9bd docs(handoff): record unit 4 (osv_map_dependencies false negatives) and move to canonical path
+--- end handoff probe ---
+
 
 Handoff + executable plan — osv-mcp-rs (2026-09-01)
 
