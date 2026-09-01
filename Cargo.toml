@@ -12,6 +12,14 @@ documentation = "https://docs.rs/osv-mcp"
 keywords = ["mcp", "security", "cve", "advisory", "vulnerability"]
 categories = ["development-tools", "security"]
 
+# Keep the published .crate lean and rule-14-clean: exclude the embedded
+# build tooling (which contains a Python helper) and the machine-local
+# AGENTS.md (absolute /data paths) from the package.
+exclude = [
+  "build/",
+  "AGENTS.md",
+]
+
 # Standalone crate; /data is a multi-project layout, not a cargo workspace.
 [workspace]
 
